@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# 图标中间产物：从游戏截图裁出来的原图，需要时用 make_icon.py 重新生成
+packaging/icon-source.png
+packaging/icon-preview.png
+ref-*.png
+
+# 运行产物
+out/
+*.log

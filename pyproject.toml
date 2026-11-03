@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wuwa-elim"
+version = "1.0.0"
+description = "鸣潮·无音消除 助手：读屏识别棋盘并计算最优交换"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mss>=10.0",
+    "pillow>=10.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pyinstaller>=6.0"]
+
+# 图形界面：Windows 上会生成不带控制台窗口的 .exe
+[project.gui-scripts]
+wuwa-elim = "wuwa_elim.ui:run"
+
+# 命令行版（会带控制台，方便看输出）
+[project.scripts]
+wuwa-elim-cli = "wuwa_elim.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

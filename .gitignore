@@ -14,3 +14,9 @@ ref-*.png
 # 运行产物
 out/
 *.log
+
+# 打包时生成的构建身份（版本/commit/时间），每次 build.ps1 重写
+packaging/build-info.json
+
+# 仓库根目录的截图（调试用），别提交：里面有聊天窗口等个人信息
+/*.png

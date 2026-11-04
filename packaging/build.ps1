@@ -1,9 +1,11 @@
-﻿﻿# 打包脚本：单文件、无控制台、启动即请求管理员权限
+﻿# 打包脚本：单文件、无控制台、启动即请求管理员权限
 # 用法:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1 [-Clean]
 #
-# 注意：本文件必须以 UTF-8 with BOM 保存。
+# 注意：本文件必须以 UTF-8 with BOM 保存，而且**只能有一个 BOM**。
 # Windows PowerShell 5.1 读无 BOM 的 UTF-8 会按 ANSI(GBK) 解码，
 # 中文全部乱码并吃掉字符串引号，报 MissingCatchOrFinally 之类的语法错。
+# BOM 叠成两个更隐蔽：多出来的那个被当成 "?"（Where-Object 的别名）执行，
+# 报一句 CommandNotFound 之后脚本照跑，看着像没事。
 param(
     [switch]$Clean
 )

@@ -13,7 +13,7 @@ import traceback
 from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 
-from . import board, capture, constants as C, engine, mouse, paths, solver
+from . import board, capture, constants as C, engine, mouse, paths, solver, version
 
 CELL = 56
 GAP = 3
@@ -52,6 +52,7 @@ class App:
         self._apply_icon()
         self.refresh_env()
         self._place_window()
+        self._log(f"版本 {version.describe()}")
         self._write_file(f"界面就绪，日志 {self.log_file}")
         self.root.after(120, self._drain)
 
@@ -140,7 +141,7 @@ class App:
 
     # ---------------------------------------------------------- 界面
     def _build(self) -> None:
-        self.root.title("鸣潮·无音消除 助手")
+        self.root.title(f"鸣潮·无音消除 助手  v{version.describe()}")
         self.root.geometry("1000x900+16+30")
         self.root.minsize(820, 720)
 

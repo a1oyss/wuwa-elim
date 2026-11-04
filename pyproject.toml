@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuwa-elim"
-version = "1.0.0"
+version = "1.1.0"
 description = "鸣潮·无音消除 助手：读屏识别棋盘并计算最优交换"
 readme = "README.md"
 requires-python = ">=3.10"

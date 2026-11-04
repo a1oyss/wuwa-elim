@@ -116,9 +116,14 @@ SCORE_WEIGHTS = ScoreWeights()
 # ---------------------------------------------------------------- 行为参数
 
 SETTLE_TIMEOUT = 12.0     # 等棋盘稳定的上限（秒）
-SETTLE_POLL = 0.12
+SETTLE_POLL = 0.15        # 空闲期的轮询间隔
+SETTLE_POLL_FAST = 0.04   # 刚动过手之后的密集轮询
+SETTLE_FAST_WINDOW = 1.2  # 动作后多少秒内用密集轮询
+
 EFFECT_TIMEOUT = 6.0      # 等待"这一手已生效"的上限
-EFFECT_POLL = 0.10
+EFFECT_POLL = 0.12
+EFFECT_POLL_FAST = 0.03
+EFFECT_FAST_WINDOW = 1.5
 MIN_CHANGED_CELLS = 2     # 盘面至少变这么多格才算生效
 RETRIES = 2               # 没生效时重试次数
 PRE_DRAG_PAUSE = (0.35, 0.55)

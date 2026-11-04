@@ -116,7 +116,9 @@ def wait_settled(win, timeout: float = C.SETTLE_TIMEOUT,
         if time.time() >= deadline:
             raise TimeoutError(reason)
         prev_sig = sig
-        time.sleep(poll)
+        # 自适应间隔：刚更新完画面时密集看，稳定下来后放慢，兼顾延迟和 CPU
+        time.sleep(C.SETTLE_POLL_FAST if (time.time() - start) < C.SETTLE_FAST_WINDOW
+                   else poll)
 
 
 def wait_effect(win, before: list[list[str]],
@@ -128,23 +130,27 @@ def wait_effect(win, before: list[list[str]],
     只比"有没有变化"不够：上一步的连锁可能延迟补下一颗棋子，那一格的变化会被
     误当成生效。真实的一步至少消掉 3 个棋子，盘面变化必定 ≥3 格。
     """
-    deadline = time.time() + timeout
+    start = time.time()
+    deadline = start + timeout
     base_sig: bytes | None = None
     while time.time() < deadline:
         mouse.check_abort()
         img, grid, local = grab_board(win)
         sig = board_signature(img)
 
+        delay = (C.EFFECT_POLL_FAST if (time.time() - start) < C.EFFECT_FAST_WINDOW
+                 else poll)
+
         if base_sig is None:
             base_sig = sig          # 第一帧当基准，不做判断
         elif sig == base_sig:
-            time.sleep(poll)        # 指纹没变，连分类都省了
+            time.sleep(delay)       # 指纹没变，连分类都省了
             continue
 
         cells = board.read_board(img, local)
         if count_changed(before, cells) >= min_changed:
             return True
-        time.sleep(poll)
+        time.sleep(delay)
     return False
 
 

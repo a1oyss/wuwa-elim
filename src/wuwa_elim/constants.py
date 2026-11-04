@@ -120,6 +120,13 @@ SETTLE_POLL = 0.15        # 空闲期的轮询间隔
 SETTLE_POLL_FAST = 0.04   # 刚动过手之后的密集轮询
 SETTLE_FAST_WINDOW = 1.2  # 动作后多少秒内用密集轮询
 
+# 像素指纹一直不重合时，改用"两次识别结果相同"判稳的等待时间。
+# 棋盘区有选中框呼吸、光影流动之类的细碎动画时，指纹永远不会一致。
+SETTLE_CONTENT_FALLBACK = 3.0
+# 盘面稳定但仍有三连，多半是识别误判（游戏不会留着三连不消）；
+# 再等这么久还这样就直接放行。
+SETTLE_MATCH_GRACE = 4.0
+
 EFFECT_TIMEOUT = 6.0      # 等待"这一手已生效"的上限
 EFFECT_POLL = 0.12
 EFFECT_POLL_FAST = 0.03

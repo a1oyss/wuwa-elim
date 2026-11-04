@@ -124,50 +124,71 @@ _GDI32.BitBlt.argtypes = [wt.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                           ctypes.c_int, wt.HDC, ctypes.c_int, ctypes.c_int,
                           wt.DWORD]
 _GDI32.BitBlt.restype = wt.BOOL
-_GDI32.GetDIBits.argtypes = [wt.HDC, wt.HBITMAP, wt.UINT, wt.UINT,
-                             ctypes.c_void_p, ctypes.POINTER(_BITMAPINFO),
-                             wt.UINT]
-_GDI32.GetDIBits.restype = ctypes.c_int
+_GDI32.CreateDIBSection.argtypes = [wt.HDC, ctypes.POINTER(_BITMAPINFO), wt.UINT,
+                                    ctypes.POINTER(ctypes.c_void_p), wt.HANDLE,
+                                    wt.DWORD]
+_GDI32.CreateDIBSection.restype = wt.HBITMAP
+_GDI32.DeleteObject.argtypes = [wt.HGDIOBJ]
+_GDI32.DeleteDC.argtypes = [wt.HDC]
+_USER32.ReleaseDC.argtypes = [wt.HWND, wt.HDC]
 
 
 class _GdiCapturer:
-    """常驻的屏幕抓取器：(宽, 高) 不变时复用 DC 和位图。"""
+    """常驻的屏幕抓取器：尺寸不变时复用 DC 和位图。
+
+    用 CreateDIBSection 而不是"兼容位图 + GetDIBits"：后者要求位图**没有**被
+    选进 DC，而 BitBlt 又必须选进去，属于自相矛盾的用法，实测会偶发失败。
+    DIB section 直接给出内存指针，BitBlt 完就能读，还省掉一次拷贝。
+    """
 
     def __init__(self) -> None:
         self._screen = None
         self._mem = None
         self._bmp = None
-        self._info = None
-        self._buf = None
+        self._arr = None
         self.size: tuple[int, int] | None = None
 
+    def reset(self) -> None:
+        """显示状态变化（分辨率、锁屏、独占全屏）后 DC 会失效，丢弃重建。"""
+        if self._bmp:
+            _GDI32.DeleteObject(self._bmp)
+        if self._mem:
+            _GDI32.DeleteDC(self._mem)
+        if self._screen:
+            _USER32.ReleaseDC(None, self._screen)
+        self._screen = self._mem = self._bmp = self._arr = None
+        self.size = None
+
     def _setup(self, w: int, h: int) -> None:
+        self.reset()
         self._screen = _USER32.GetDC(None)
         self._mem = _GDI32.CreateCompatibleDC(self._screen)
-        self._bmp = _GDI32.CreateCompatibleBitmap(self._screen, w, h)
-        _GDI32.SelectObject(self._mem, self._bmp)
 
         info = _BITMAPINFO()
         info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
         info.bmiHeader.biWidth = w
-        info.bmiHeader.biHeight = -h          # 负数 = 自上而下，省一次翻转
+        info.bmiHeader.biHeight = -h          # 负数 = 自上而下
         info.bmiHeader.biPlanes = 1
         info.bmiHeader.biBitCount = 32
-        info.bmiHeader.biCompression = 0
-        self._info = info
-        self._buf = (ctypes.c_ubyte * (w * h * 4))()
+        info.bmiHeader.biCompression = 0      # BI_RGB
+
+        bits = ctypes.c_void_p()
+        self._bmp = _GDI32.CreateDIBSection(
+            self._screen, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
+        if not self._bmp or not bits.value:
+            raise OSError(ctypes.get_last_error(), "CreateDIBSection 失败")
+        _GDI32.SelectObject(self._mem, self._bmp)
+
+        buf = (ctypes.c_ubyte * (w * h * 4)).from_address(bits.value)
+        self._arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
         self.size = (w, h)
 
     def grab(self, x: int, y: int, w: int, h: int) -> np.ndarray:
         if self.size != (w, h):
             self._setup(w, h)
         if not _GDI32.BitBlt(self._mem, 0, 0, w, h, self._screen, x, y, SRCCOPY):
-            raise OSError(ctypes.get_last_error(), "BitBlt failed")
-        if not _GDI32.GetDIBits(self._screen, self._bmp, 0, h, self._buf,
-                                ctypes.byref(self._info), 0):
-            raise OSError(ctypes.get_last_error(), "GetDIBits failed")
-        arr = np.frombuffer(self._buf, dtype=np.uint8).reshape(h, w, 4)
-        return np.ascontiguousarray(arr[:, :, [2, 1, 0]])
+            raise OSError(ctypes.get_last_error(), "BitBlt 失败")
+        return np.ascontiguousarray(self._arr[:, :, [2, 1, 0]])
 
 
 _CAPTURER = _GdiCapturer()
@@ -179,7 +200,8 @@ def grab(win: Window, rect: tuple[int, int, int, int] | None = None) -> np.ndarr
     rect 是窗口内的 (left, top, width, height)；不传就抓整个窗口。
     棋盘只占整窗的一半左右，读盘时只抓棋盘区域能省掉一半的像素搬运。
 
-    优先用常驻 GDI（约 17ms）；GDI 失败时退回 mss（约 36ms）。
+    优先用常驻 GDI（约 17ms）。GDI 失败先重建资源重试一次（分辨率变化、锁屏
+    之后 DC 会失效），仍失败才退回 mss（约 36ms）。
     """
     global _SCT
 
@@ -188,18 +210,54 @@ def grab(win: Window, rect: tuple[int, int, int, int] | None = None) -> np.ndarr
     else:
         x, y, w, h = rect
 
-    try:
-        return _CAPTURER.grab(win.left + x, win.top + y, w, h)
-    except OSError:
-        pass
+    for attempt in range(2):
+        try:
+            return _CAPTURER.grab(win.left + x, win.top + y, w, h)
+        except OSError:
+            _CAPTURER.reset()          # 丢掉可能失效的 DC，下次重建
+            if attempt:
+                break
 
     if _SCT is None:
         _SCT = mss.MSS()
-    shot = _SCT.grab({"left": win.left + x, "top": win.top + y,
-                      "width": w, "height": h})
+    try:
+        shot = _SCT.grab({"left": win.left + x, "top": win.top + y,
+                          "width": w, "height": h})
+    except Exception as exc:           # noqa: BLE001
+        _SCT = None
+        raise RuntimeError(
+            f"抓屏失败（{exc}）。常见原因：屏幕已锁定、UAC 授权弹窗正在显示、"
+            f"或游戏切到了独占全屏。") from exc
+
     arr = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(
         shot.height, shot.width, 4)
     return np.ascontiguousarray(arr[:, :, [2, 1, 0]])
+
+
+# ---------------------------------------------------------------- 遮挡检查
+
+GA_ROOT = 2
+_USER32.WindowFromPoint.argtypes = [wt.POINT]
+_USER32.WindowFromPoint.restype = wt.HWND
+_USER32.GetAncestor.argtypes = [wt.HWND, wt.UINT]
+_USER32.GetAncestor.restype = wt.HWND
+
+
+def board_covered(win: Window, rect: tuple[int, int, int, int]) -> bool:
+    """采样棋盘内的几个点，判断上面盖的是不是别的窗口。
+
+    游戏被切到后台、或者有别的窗口压上来时，抓到的会是那些窗口的像素 ——
+    分类器照样能"认出"一堆棋子，喂给引擎就是纯粹的垃圾。这里先挡掉。
+    """
+    x0, y0, w, h = rect
+    for fx, fy in ((0.5, 0.5), (0.25, 0.35), (0.75, 0.65)):
+        px = win.left + x0 + int(w * fx)
+        py = win.top + y0 + int(h * fy)
+        hwnd = _USER32.WindowFromPoint(wt.POINT(px, py))
+        root = _USER32.GetAncestor(hwnd, GA_ROOT) or hwnd
+        if root != win.hwnd:
+            return True
+    return False
 
 
 def monitors() -> list[dict]:

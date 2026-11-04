@@ -67,17 +67,22 @@ def wait_settled(win, timeout: float = C.SETTLE_TIMEOUT,
     """等到棋盘静止可决策，返回 (img, grid, cells)，超时抛 TimeoutError。
 
     先用画面指纹判断"变没变"，只有连续两帧一致时才做完整识别 —— 轮询时省掉
-    大量无用的分类计算。若 3 秒内始终不稳定，退化成每轮都识别，避免因为棋盘区
-    有细碎动画而永远等不到。
+    大量无用的分类计算。
+
+    但指纹并不可靠：棋盘区只要有选中框呼吸、光影流动这类细碎动画，两帧永远
+    不会完全一致。所以超过 SETTLE_CONTENT_FALLBACK 秒后改用**内容**判稳
+    （两次识别出来的 56 格一样就算稳定），不再看像素。
 
     "盘面上还有三连"只作为动画未结束的提示，不当作硬条件 —— 一旦某格被认错
     就会永远等不到"无三连"而卡死（终极棋子被认成白兔时就是这么卡住的）。
-    同样的状态持续超过 4 秒，就判为识别误判，继续往下走。
+    同样的状态持续超过 SETTLE_MATCH_GRACE 秒，就判为识别误判，继续往下走。
     """
     log = log or _noop
     start = time.time()
     deadline = start + timeout
+    _, watch_rect, _ = board_view(win)      # 已缓存，代价可以忽略
     prev_sig: bytes | None = None
+    prev_cells: list[list[str]] | None = None
     stable_since: float | None = None
     reason = "刚开始"
 
@@ -85,19 +90,28 @@ def wait_settled(win, timeout: float = C.SETTLE_TIMEOUT,
         mouse.check_abort()
         img, grid, local = grab_board(win)
         sig = board_signature(img)
+        elapsed = time.time() - start
         same_frame = sig == prev_sig
+        by_content = elapsed > C.SETTLE_CONTENT_FALLBACK
+        covered = capture.board_covered(win, watch_rect)
 
-        if same_frame or (time.time() - start) > 3.0:
+        if covered:
+            stable_since = None
+            reason = "游戏窗口被遮挡（请把游戏切到前台）"
+        elif same_frame or by_content:
             cells = board.read_board(img, local)
             unknown = sum(row.count(C.WALL) for row in cells)
             pending = solver.has_match(cells)
 
-            if unknown == 0 and same_frame:
+            # 像素一致，或者退化成内容一致，都算"稳定"
+            stable = same_frame or (by_content and cells == prev_cells)
+
+            if unknown == 0 and stable:
                 if not pending:
                     return img, grid, cells
                 if stable_since is None:
                     stable_since = time.time()
-                elif time.time() - stable_since > 4.0:
+                elif time.time() - stable_since > C.SETTLE_MATCH_GRACE:
                     log("注意: 稳定盘面上仍有残留三连，按识别误判继续。")
                     return img, grid, cells
                 reason = "盘面稳定但有三连，可能是识别误判"
@@ -107,8 +121,11 @@ def wait_settled(win, timeout: float = C.SETTLE_TIMEOUT,
                     reason = f"有 {unknown} 格没认出来（可能被弹窗遮挡）"
                 elif pending:
                     reason = "盘面还有三连在消，动画没结束"
+                elif by_content:
+                    reason = "两次识别结果不同（画面仍在变）"
                 else:
-                    reason = "两次读数还在变化"
+                    reason = "画面还在变化"
+            prev_cells = cells
         else:
             stable_since = None
             reason = "画面还在变化"

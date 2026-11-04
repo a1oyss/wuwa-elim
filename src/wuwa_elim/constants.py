@@ -75,6 +75,10 @@ ZONE_MIN_FRAC = 0.045
 # 取多大的框去找三角（方块外圈比识别用的框大）
 MARKER_BOX = 0.47
 
+# 找三角时的采样步进。三角本身够大，隔一个像素取一个判断结果一致，
+# 但像素量少 4 倍。
+MARKER_STRIDE = 2
+
 # 能量瓶头顶金心的检测区域（纵向比例）与判色阈值
 HEART_TOP = 0.42
 
@@ -112,9 +116,9 @@ SCORE_WEIGHTS = ScoreWeights()
 # ---------------------------------------------------------------- 行为参数
 
 SETTLE_TIMEOUT = 12.0     # 等棋盘稳定的上限（秒）
-SETTLE_POLL = 0.35
+SETTLE_POLL = 0.12
 EFFECT_TIMEOUT = 6.0      # 等待"这一手已生效"的上限
-EFFECT_POLL = 0.3
+EFFECT_POLL = 0.10
 MIN_CHANGED_CELLS = 2     # 盘面至少变这么多格才算生效
 RETRIES = 2               # 没生效时重试次数
 PRE_DRAG_PAUSE = (0.35, 0.55)

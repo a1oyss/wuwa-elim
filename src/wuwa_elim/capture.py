@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 import mss
 import numpy as np
-from PIL import Image
 
 from .constants import GAME_TITLE
 
@@ -88,12 +87,33 @@ def find_window(title: str = GAME_TITLE) -> Window | None:
     return found[0] if found else None
 
 
-def grab(win: Window) -> np.ndarray:
-    """返回 HxWx3 的 RGB numpy 数组。"""
-    with mss.MSS() as sct:
-        shot = sct.grab(win.region)
-        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-        return np.asarray(img)
+_SCT = None
+
+
+def grab(win: Window, rect: tuple[int, int, int, int] | None = None) -> np.ndarray:
+    """返回 HxWx3 的 RGB numpy 数组。
+
+    rect 是窗口内的 (left, top, width, height)；不传就抓整个窗口。
+    棋盘只占整窗的一半左右，读盘时只抓棋盘区域能省掉一半的像素搬运。
+
+    全程不经过 PIL：mss 给的是一块 BGRA 缓冲，直接 frombuffer 取视图再换通道，
+    省掉一次解码 + 一次拷贝。
+    """
+    global _SCT
+    if _SCT is None:
+        _SCT = mss.MSS()
+
+    if rect is None:
+        region = win.region
+    else:
+        x, y, w, h = rect
+        region = {"left": win.left + x, "top": win.top + y,
+                  "width": w, "height": h}
+
+    shot = _SCT.grab(region)
+    arr = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(
+        shot.height, shot.width, 4)
+    return np.ascontiguousarray(arr[:, :, [2, 1, 0]])
 
 
 def monitors() -> list[dict]:

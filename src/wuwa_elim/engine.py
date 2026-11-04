@@ -16,10 +16,46 @@ def _noop(_msg: str) -> None:
     pass
 
 
+_VIEW_CACHE: dict[tuple, tuple] = {}
+
+
+def board_view(win: capture.Window):
+    """返回 (整窗 grid, 要抓取的矩形, 局部 grid)。
+
+    第一次抓整窗并拟合网格，之后只抓棋盘那一块 —— 棋盘大约占整窗一半，
+    读盘时能省掉一半的像素搬运。整窗 grid 用来算屏幕坐标，局部 grid 用来识别。
+    """
+    key = (win.hwnd, win.width, win.height)
+    cached = _VIEW_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    full = capture.grab(win)
+    grid = board.fit_grid(full, cache_key=key)
+    pad = 12
+    x0 = max(0, grid.cell_x[0] - grid.pitch_x // 2 - pad)
+    y0 = max(0, grid.cell_y[0] - grid.pitch_y // 2 - pad)
+    x1 = min(win.width, grid.cell_x[-1] + grid.pitch_x // 2 + pad)
+    y1 = min(win.height, grid.cell_y[-1] + grid.pitch_y // 2 + pad)
+    rect = (x0, y0, x1 - x0, y1 - y0)
+    entry = (grid, rect, grid.offset(x0, y0))
+    _VIEW_CACHE[key] = entry
+    return entry
+
+
+def grab_board(win: capture.Window):
+    grid, rect, local = board_view(win)
+    return capture.grab(win, rect), grid, local
+
+
+def board_signature(img: np.ndarray) -> bytes:
+    """画面指纹：粗采样就够判断"这一帧和上一帧一样不一样"。"""
+    return img[::16, ::16].tobytes()
+
+
 def read_state(win: capture.Window):
-    img = capture.grab(win)
-    grid = board.fit_grid(img)
-    return img, grid, board.read_board(img, grid)
+    img, grid, local = grab_board(win)
+    return img, grid, board.read_board(img, local)
 
 
 def count_changed(a: list[list[str]], b: list[list[str]]) -> int:
@@ -30,44 +66,56 @@ def wait_settled(win, timeout: float = C.SETTLE_TIMEOUT,
                  poll: float = C.SETTLE_POLL, log: Logger | None = None):
     """等到棋盘静止可决策，返回 (img, grid, cells)，超时抛 TimeoutError。
 
-    稳定 = 连续两次读数一致 + 无未识别格。"盘面上还有三连"只作为动画未结束的
-    提示，不当作硬条件 —— 一旦某格被认错就会永远等不到"无三连"而卡死
-    （终极棋子被认成白兔时就是这么卡住的）。同样的状态持续超过 4 秒，
-    就判为识别误判，继续往下走。
+    先用画面指纹判断"变没变"，只有连续两帧一致时才做完整识别 —— 轮询时省掉
+    大量无用的分类计算。若 3 秒内始终不稳定，退化成每轮都识别，避免因为棋盘区
+    有细碎动画而永远等不到。
+
+    "盘面上还有三连"只作为动画未结束的提示，不当作硬条件 —— 一旦某格被认错
+    就会永远等不到"无三连"而卡死（终极棋子被认成白兔时就是这么卡住的）。
+    同样的状态持续超过 4 秒，就判为识别误判，继续往下走。
     """
     log = log or _noop
-    deadline = time.time() + timeout
-    prev: list[list[str]] | None = None
+    start = time.time()
+    deadline = start + timeout
+    prev_sig: bytes | None = None
     stable_since: float | None = None
     reason = "刚开始"
 
     while True:
         mouse.check_abort()
-        img, grid, cells = read_state(win)
-        unknown = sum(row.count(C.WALL) for row in cells)
-        pending = solver.has_match(cells)
+        img, grid, local = grab_board(win)
+        sig = board_signature(img)
+        same_frame = sig == prev_sig
 
-        if unknown == 0 and cells == prev:
-            if not pending:
-                return img, grid, cells
-            if stable_since is None:
-                stable_since = time.time()
-            elif time.time() - stable_since > 4.0:
-                log("注意: 稳定盘面上仍有残留三连，按识别误判继续。")
-                return img, grid, cells
-            reason = "盘面稳定但有三连，可能是识别误判"
+        if same_frame or (time.time() - start) > 3.0:
+            cells = board.read_board(img, local)
+            unknown = sum(row.count(C.WALL) for row in cells)
+            pending = solver.has_match(cells)
+
+            if unknown == 0 and same_frame:
+                if not pending:
+                    return img, grid, cells
+                if stable_since is None:
+                    stable_since = time.time()
+                elif time.time() - stable_since > 4.0:
+                    log("注意: 稳定盘面上仍有残留三连，按识别误判继续。")
+                    return img, grid, cells
+                reason = "盘面稳定但有三连，可能是识别误判"
+            else:
+                stable_since = None
+                if unknown:
+                    reason = f"有 {unknown} 格没认出来（可能被弹窗遮挡）"
+                elif pending:
+                    reason = "盘面还有三连在消，动画没结束"
+                else:
+                    reason = "两次读数还在变化"
         else:
             stable_since = None
-            if unknown:
-                reason = f"有 {unknown} 格没认出来（可能被弹窗遮挡）"
-            elif pending:
-                reason = "盘面还有三连在消，动画没结束"
-            else:
-                reason = "两次读数还在变化"
+            reason = "画面还在变化"
 
         if time.time() >= deadline:
             raise TimeoutError(reason)
-        prev = cells
+        prev_sig = sig
         time.sleep(poll)
 
 
@@ -81,9 +129,19 @@ def wait_effect(win, before: list[list[str]],
     误当成生效。真实的一步至少消掉 3 个棋子，盘面变化必定 ≥3 格。
     """
     deadline = time.time() + timeout
+    base_sig: bytes | None = None
     while time.time() < deadline:
         mouse.check_abort()
-        _, _, cells = read_state(win)
+        img, grid, local = grab_board(win)
+        sig = board_signature(img)
+
+        if base_sig is None:
+            base_sig = sig          # 第一帧当基准，不做判断
+        elif sig == base_sig:
+            time.sleep(poll)        # 指纹没变，连分类都省了
+            continue
+
+        cells = board.read_board(img, local)
         if count_changed(before, cells) >= min_changed:
             return True
         time.sleep(poll)

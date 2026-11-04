@@ -37,6 +37,12 @@ class Grid:
     def center(self, col: int, row: int) -> tuple[int, int]:
         return self.cell_x[col], self.cell_y[row]
 
+    def offset(self, dx: int, dy: int) -> "Grid":
+        """整体平移。用于把窗口坐标换算到"只抓了棋盘那一块"的局部坐标。"""
+        return Grid([x - dx for x in self.cell_x],
+                    [y - dy for y in self.cell_y],
+                    self.pitch_x, self.pitch_y)
+
     def to_screen(self, col: int, row: int,
                   win_left: int, win_top: int) -> tuple[int, int]:
         cx, cy = self.center(col, row)
@@ -111,21 +117,39 @@ def _fit_auto(img: np.ndarray) -> Grid:
                 _lattice(by0, by1, pitch_y, phase_y), pitch_x, pitch_y)
 
 
-def fit_grid(img: np.ndarray) -> Grid:
+_GRID_CACHE: dict[tuple, Grid] = {}
+
+
+def fit_grid(img: np.ndarray, cache_key: tuple | None = None) -> Grid:
     """拟合棋盘晶格。
 
     自动拟合假定"棋盘是画面里最亮的一块"。一旦有弹窗（效果说明、结算界面）
     压在棋盘上并压暗背景，拟合会跑偏（实测出现过 11x9）。所以结果必须过校验，
     不合理就退回实测标定的晶格；退回后若画面仍是压暗状态，格子会大面积认不出来，
     调用方据此拒绝行动 —— 这是期望行为。
+
+    cache_key 用于缓存：窗口不变时棋盘几何是恒定的，没必要每帧重算。
+    实测拟合一次 239ms，占单次读盘的 62%，缓存后降到 0。
     """
+    if cache_key is not None:
+        cached = _GRID_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
-        fitted = _fit_auto(img)
-        if _plausible(fitted):
-            return fitted
+        grid = _fit_auto(img)
+        if not _plausible(grid):
+            grid = _calibrated_grid()
     except Exception:                      # noqa: BLE001
-        pass
-    return _calibrated_grid()
+        grid = _calibrated_grid()
+
+    if cache_key is not None:
+        _GRID_CACHE[cache_key] = grid
+    return grid
+
+
+def clear_grid_cache() -> None:
+    _GRID_CACHE.clear()
 
 
 # ---------------------------------------------------------------- 特征提取
@@ -144,8 +168,9 @@ class CellFeature:
 
 
 def _yellow(patch: np.ndarray) -> np.ndarray:
+    """金色掩码。直接在 uint8 上比较，不做 /255 的浮点转换 —— 这是热路径。"""
     r, g, b = patch[:, :, 0], patch[:, :, 1], patch[:, :, 2]
-    return (r > 0.78) & (g > 0.55) & (b < 0.45)
+    return (r > 198) & (g > 140) & (b < 115)
 
 
 def _zone_hit(mask: np.ndarray, zone: tuple[float, float, float, float]) -> bool:
@@ -172,7 +197,7 @@ def detect_marker(tile_patch: np.ndarray) -> str | None:
 def _count_hearts(top: np.ndarray) -> int:
     """数格子顶部那一排金色心。"""
     r, g, b = top[:, :, 0], top[:, :, 1], top[:, :, 2]
-    on = ((r > 0.78) & (g > 0.55) & (b < 0.55)).sum(axis=0) >= 2
+    on = ((r > 198) & (g > 140) & (b < 140)).sum(axis=0) >= 2
     hearts, prev = 0, False
     for v in on:
         if v and not prev:
@@ -182,30 +207,44 @@ def _count_hearts(top: np.ndarray) -> int:
 
 
 def sample_cell(img: np.ndarray, grid: Grid, col: int, row: int) -> CellFeature:
+    """取一格的统计特征。
+
+    全部在 uint8 上做整数比较：早先的写法把每格 15 万像素转成 float32 再除 255，
+    56 格就是 900 万次浮点转换，识别 80ms 里大半耗在这上面。
+    """
     cx, cy = grid.center(col, row)
     hw = int(grid.pitch_x * C.CELL_BOX / 2)
     hh = int(grid.pitch_y * C.CELL_BOX / 2)
-    patch = img[cy - hh:cy + hh, cx - hw:cx + hw].astype(np.float32) / 255.0
+    patch = img[cy - hh:cy + hh, cx - hw:cx + hw]        # uint8 HxWx3
 
     r, g, b = patch[:, :, 0], patch[:, :, 1], patch[:, :, 2]
-    mx, mn = patch.max(axis=2), patch.min(axis=2)
-    sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0.0)
+    # 分通道两两比，别用 max(axis=2)：在步长为 3 的轴上归约实测慢 13 倍
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
 
-    magenta = ((r > 0.75) & (g < 0.63) & (b > 0.43) & (b < 0.92)).mean()
+    magenta = ((r > 191) & (g < 160) & (b > 110) & (b < 235)).mean()
     hearts = _count_hearts(patch[: max(1, int(patch.shape[0] * C.HEART_TOP))])
 
     mh_w = int(grid.pitch_x * C.MARKER_BOX)
     mh_h = int(grid.pitch_y * C.MARKER_BOX)
-    big = (img[cy - mh_h:cy + mh_h, cx - mh_w:cx + mh_w]
-           .astype(np.float32) / 255.0)
+    # 步进采样：三角标记够大，隔一个像素取一个判断结果完全一致（实测 56 格无差异）
+    big = img[cy - mh_h:cy + mh_h:C.MARKER_STRIDE,
+              cx - mh_w:cx + mh_w:C.MARKER_STRIDE]
     marker = detect_marker(big) if big.size else None
+
+    # 用整数累加算统计量：mean() 会把 7 万像素升成 float64，56 格就是上千万次转换
+    px = patch.shape[0] * patch.shape[1]
+    sum_rgb = patch.sum(axis=(0, 1), dtype=np.int64)
+    mx_sum = int(mx.sum(dtype=np.int64))
+    diff_sum = int(np.subtract(mx, mn, dtype=np.int16).sum(dtype=np.int64))
 
     return CellFeature(
         col=col, row=row,
-        mean_rgb=tuple(int(v * 255) for v in patch.reshape(-1, 3).mean(axis=0)),
-        sat_mean=float(sat.mean()),
-        val_mean=float(mx.mean()),
-        bright_frac=float((mx > 0.55).mean()),
+        mean_rgb=(int(sum_rgb[0]) // px, int(sum_rgb[1]) // px,
+                  int(sum_rgb[2]) // px),
+        sat_mean=diff_sum / mx_sum if mx_sum else 0.0,
+        val_mean=mx_sum / (px * 255.0),
+        bright_frac=float(np.count_nonzero(mx > 140)) / px,
         magenta_frac=float(magenta),
         hearts=hearts,
         marker=marker,

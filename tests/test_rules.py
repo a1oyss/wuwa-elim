@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 
 import conftest  # noqa: F401  (把 src 加进 sys.path)
-from wuwa_elim import constants as C, solver
+from wuwa_elim import board, constants as C, solver
 
 COLS = 8
 ROWS = 7
@@ -82,6 +82,26 @@ def main() -> int:
     ok &= check("冰块不下落，且挡住上方棋子",
                 out[0][0] == "G" and out[1][0] == "C",
                 f"col0={[out[i][0] for i in range(3)]}")
+
+    print("\n[顶行冰块：这一列补不进新棋子]")
+    # 实测关卡：(0,0) 是冰块，它下面消空之后留下的就是槽底，不是新棋子
+    out = solver.collapse(T(["C"], ["."], ["G"], ["G"]))
+    col0 = [out[i][0] for i in range(ROWS)]
+    ok &= check("冰块钉在顶行，整列沉到底，空位留在冰块正下方",
+                col0 == ["C"] + [C.EMPTY] * 4 + ["G", "G"], f"col0={col0}")
+    ok &= check("空位不算棋子，不能靠它连成三连",
+                not solver.find_runs(B("GG.GG")),
+                f"runs={solver.find_runs(B('GG.GG'))}")
+    mv = solver.evaluate(B("G."), (0, 0), (1, 0))
+    ok &= check("不能把棋子换进空位", mv is None, f"evaluate={mv}")
+
+    print("\n[空位 vs 没认出来]")
+    hole = board.CellFeature(0, 1, C.GAP_RGB, 0.36, 0.23, 0.00, 0.0, 0, None)
+    ok &= check("槽底背景格 -> 空位 .（当成 ? 会永远等不到稳定）",
+                board.label(hole) == C.EMPTY, f"label={board.label(hole)}")
+    dimmed = board.CellFeature(0, 1, (68, 97, 107), 0.36, 0.42, 0.00, 0.0, 0, None)
+    ok &= check("弹窗把棋盘压暗 -> 仍算没认出来，不误判成空位",
+                board.label(dimmed) == C.WALL, f"label={board.label(dimmed)}")
 
     print("\n[能量瓶]")
     r = solver.resolve(T(["G", "G", "G"], [".", "O3"]))

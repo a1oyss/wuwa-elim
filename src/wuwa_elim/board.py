@@ -277,7 +277,22 @@ def name_of(code: str) -> str:
     return TILE_NAMES.get(code, code)
 
 
+def _is_hole(feat: CellFeature) -> bool:
+    """空格子（槽底背景）而不是"没认出来的棋子"。
+
+    顶行有冰块时这一列补不进新棋子，消完就会留下这种洞。它必须认成空位：
+    当成 '?' 的话 wait_settled 永远等不到 unknown==0，整局会卡在重试里。
+    """
+    if feat.bright_frac > C.HOLE_BRIGHT_FRAC:
+        return False
+    d = float(np.linalg.norm(np.array(feat.mean_rgb, dtype=float)
+                             - np.array(C.GAP_RGB, dtype=float)))
+    return d <= C.HOLE_DIST
+
+
 def label(feat: CellFeature) -> str:
+    if _is_hole(feat):
+        return C.EMPTY
     if feat.magenta_frac >= C.MAGENTA_ULTIMATE:
         return C.ULT
     if feat.val_mean < C.DARK_VAL:

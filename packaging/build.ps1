@@ -51,9 +51,14 @@ try {
         py -3.14 packaging\make_icon.py
     }
 
-    if ($Clean) {
-        Write-Host "==> 清理 build/dist" -ForegroundColor Cyan
-        Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+    # dist 里只能有这一次的产物：留着上一版的分发包，最容易出现
+    # "代码更新了，但发出去的还是旧 exe"。旧包一律先清掉，删不掉就报错。
+    Write-Host "==> 清理旧产物" -ForegroundColor Cyan
+    if ($Clean -and (Test-Path "build")) {
+        Remove-Item -Recurse -Force "build" -ErrorAction Stop
+    }
+    if (Test-Path "dist") {
+        Remove-Item -Recurse -Force "dist" -ErrorAction Stop
     }
 
     Write-Host "==> 检查依赖" -ForegroundColor Cyan

@@ -212,6 +212,10 @@ def describe(mv: solver.Move) -> str:
         extra += f"  造出[{''.join(mv.specials)}]"
     if mv.energy:
         extra += f"  能量+{mv.energy}"
+    if mv.hourglasses:
+        extra += f"  沙漏触底x{mv.hourglasses}(回合+{2 * mv.hourglasses})"
+    elif mv.fallen:
+        extra += f"  沙漏下落{mv.fallen}行"
     return (f"{mv.label:<16} 分数≈{mv.score:>5.0f} 消除={mv.cleared:>2} "
             f"连锁={mv.cascades}  [{groups}]{extra}")
 

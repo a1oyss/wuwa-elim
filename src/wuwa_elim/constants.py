@@ -47,6 +47,7 @@ TILE_COLORS: dict[str, tuple[int, int, int]] = {
     "C": (125, 221, 222),   # 青冰块（障碍物，不是可消除颜色）
     "O": (172, 130, 182),   # 能量瓶
     "U": (214, 161, 197),   # 终极棋子（粉色棋盘格）
+    "H": (175, 157, 100),   # 沙漏（第五关目标棋子，金色）
 }
 
 # 离最近签名超过这个距离就判"没把握"，宁可不动也别乱动
@@ -94,6 +95,7 @@ COLORS = frozenset("GRMDL")
 ICE = "C"
 BOTTLE = "O"
 ULT = "u"
+HOURGLASS = "H"
 MARK_BOMB = "b"
 MARK_CROSS = "x"
 SPECIALS = frozenset({MARK_BOMB, MARK_CROSS})
@@ -104,6 +106,11 @@ BOTTLE_ENERGY = 80
 
 # 造出一个特殊棋子的期望价值，折算成等效消除格数（估计值，只影响排序）
 SPECIAL_WORTH_TILES = {MARK_BOMB: 8.0, MARK_CROSS: 12.0, ULT: 16.0}
+
+# 沙漏触底一颗 = 多 2 个操作回合，按等效消除格数估；只影响排序，不进分数。
+# 往下落一行也给一点小奖励，让引擎优先消沙漏下面的棋子。
+HOURGLASS_DROP_WORTH = 20.0
+HOURGLASS_FALL_WORTH = 1.0
 
 NEIGHBORS_8 = tuple((dc, dr) for dc in (-1, 0, 1) for dr in (-1, 0, 1)
                     if dc or dr)

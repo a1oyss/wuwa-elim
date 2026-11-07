@@ -103,6 +103,31 @@ def main() -> int:
     ok &= check("弹窗把棋盘压暗 -> 仍算没认出来，不误判成空位",
                 board.label(dimmed) == C.WALL, f"label={board.label(dimmed)}")
 
+    print("\n[沙漏：第五关目标棋子]")
+    ok &= check("沙漏没有颜色，连不成三连", not solver.find_runs(B("HHH")),
+                f"runs={solver.find_runs(B('HHH'))}")
+    out = solver.collapse(T(["H"], ["G"]))
+    ok &= check("沙漏会随重力下落（不是冰块那种钉死的障碍）",
+                out[6][0] == "G" and out[5][0] == "H",
+                f"col0={[out[i][0] for i in range(7)]}")
+    r = solver.resolve(T(["."], ["."], ["."], ["."], ["."], ["H"],
+                         ["G", "G", "G"]))
+    ok &= check("下面的棋子消掉后沙漏触底 -> 消失并计数",
+                r.hourglasses == 1 and "H" not in flat(r.board),
+                f"hourglasses={r.hourglasses}")
+    g = T(["G", "G", "Gb", "H"],
+          [".", ".", ".", "D"], [".", ".", ".", "R"], [".", ".", ".", "D"],
+          [".", ".", ".", "R"], [".", ".", ".", "D"], [".", ".", ".", "R"])
+    r = solver.resolve(g)
+    ok &= check("爆炸波及也不消沙漏，只认触底",
+                "H" in flat(r.board) and r.hourglasses == 0,
+                f"hourglasses={r.hourglasses}")
+    mv = solver.Move(a=(0, 0), b=(1, 0), score=30, cleared=3, cascades=1,
+                     hourglasses=1)
+    ok &= check("触底一颗沙漏在排序里值 20 格（=多 2 回合）",
+                mv.value == 30 + C.HOURGLASS_DROP_WORTH * C.SCORE_WEIGHTS.per_tile,
+                f"value={mv.value}")
+
     print("\n[能量瓶]")
     r = solver.resolve(T(["G", "G", "G"], [".", "O3"]))
     ok &= check("挨一次消除 -> 3 心掉到 2 心", "O2" in flat(r.board), flat(r.board))

@@ -9,8 +9,11 @@
            两个终极棋子交换清空整个棋盘
   冰块棋子  不可移动、不会下落；周围完成一次消除时碎掉，并把所在列切段
   能量瓶    周围完成三次消除后消失，给角色 80 能量；会像普通棋子一样下落
+  沙漏      第五关目标棋子；不参与三连、不被爆炸波及，会随重力下落，
+           触底自动消失并 +2 操作回合
 
-编码：G R M D L 五色 / Gb Gx 带标记 / u 终极 / C 冰块 / O3 O2 O1 能量瓶 / ? 未识别
+编码：G R M D L 五色 / Gb Gx 带标记 / u 终极 / C 冰块 / O3 O2 O1 能量瓶 /
+      H 沙漏 / . 空位 / ? 未识别
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ class Move:
     groups: list[tuple[str, int]] = field(default_factory=list)
     specials: list[str] = field(default_factory=list)
     energy: int = 0
+    hourglasses: int = 0
+    fallen: int = 0
 
     @property
     def label(self) -> str:
@@ -38,11 +43,13 @@ class Move:
 
     @property
     def value(self) -> float:
-        """排序用的综合价值：分数 + 造出特效的期望收益。"""
+        """排序用的综合价值：分数 + 造出特效的期望收益 + 沙漏进度。"""
         v = self.score
         for s in self.specials:
             kind = s[-1] if len(s) == 2 else s
             v += C.SPECIAL_WORTH_TILES.get(kind, 0.0) * C.SCORE_WEIGHTS.per_tile
+        v += (self.hourglasses * C.HOURGLASS_DROP_WORTH
+              + self.fallen * C.HOURGLASS_FALL_WORTH) * C.SCORE_WEIGHTS.per_tile
         return v
 
 
@@ -54,6 +61,8 @@ class Resolution:
     detail: list[tuple[str, int]] = field(default_factory=list)
     specials: list[str] = field(default_factory=list)
     energy: int = 0
+    hourglasses: int = 0
+    fallen: int = 0
     board: list[list[str]] = field(default_factory=list)
 
 
@@ -81,6 +90,29 @@ def bottle_hearts(t: str) -> int:
 def is_blocker(t: str) -> bool:
     """真正不动、不下落、会挡列的只有冰块。能量瓶会随补充落到新位置。"""
     return t == C.ICE
+
+
+def is_hourglass(t: str) -> bool:
+    return t == C.HOURGLASS
+
+
+def _hourglass_rows(g: list[list[str]]) -> dict[tuple[int, int], int]:
+    return {(x, y): y for y, row in enumerate(g)
+            for x, t in enumerate(row) if is_hourglass(t)}
+
+
+def _drop_bottom(g: list[list[str]], rows: int,
+                 cols: int) -> tuple[list[list[str]], int]:
+    """沙漏触底自动消失，消失后上面的棋子继续落。返回 (盘面, 触底个数)。"""
+    dropped = 0
+    while True:
+        bottom = [x for x in range(cols) if is_hourglass(g[rows - 1][x])]
+        if not bottom:
+            return g, dropped
+        for x in bottom:
+            g[rows - 1][x] = C.EMPTY
+        dropped += len(bottom)
+        g = collapse(g)
 
 
 def is_ultimate(t: str) -> bool:
@@ -260,11 +292,14 @@ def resolve(grid: list[list[str]],
     detail: list[tuple[str, int]] = []
     spawned: list[str] = []
     energy = 0
+    dropped = 0
+    fallen = 0
 
     while True:
         matches = find_matches(g)
         if not matches:
             break
+        hg_before = _hourglass_rows(g)
 
         # 1) 这次生成哪些特殊棋子、落在哪一格（保留颜色）
         pending: dict[tuple[int, int], str] = {}
@@ -312,9 +347,10 @@ def resolve(grid: list[list[str]],
         cleared_total += color_cells
         cascade += 1
 
-        # 5) 执行消除
+        # 5) 执行消除。沙漏是目标棋子，爆炸波及也不消它，只认触底。
         for (x, y) in hit:
-            g[y][x] = C.EMPTY
+            if not is_hourglass(g[y][x]):
+                g[y][x] = C.EMPTY
         for (x, y) in ice_hit:
             g[y][x] = C.EMPTY
         for (x, y) in bottles:
@@ -331,9 +367,18 @@ def resolve(grid: list[list[str]],
             spawned.append(kind)
 
         g = collapse(g)
+        g, d = _drop_bottom(g, rows, cols)
+        dropped += d
+        hg_after = _hourglass_rows(g)
+        fallen += sum(max(0, hg_after.get(pos, rows - 1) - y)
+                      for pos, y in hg_before.items())
+
+    g, d = _drop_bottom(g, rows, cols)
+    dropped += d
 
     return Resolution(score=total, cleared=cleared_total, cascades=cascade,
-                      detail=detail, specials=spawned, energy=energy, board=g)
+                      detail=detail, specials=spawned, energy=energy,
+                      hourglasses=dropped, fallen=fallen, board=g)
 
 
 # ---------------------------------------------------------------- 走法枚举
@@ -387,7 +432,8 @@ def evaluate(grid: list[list[str]], a: tuple[int, int],
         res = resolve(swapped, {a, b})
         return Move(a=a, b=b, score=res.score + extra * C.SCORE_WEIGHTS.per_tile,
                     cleared=res.cleared + extra, cascades=res.cascades + 1,
-                    groups=res.detail, specials=res.specials, energy=res.energy)
+                    groups=res.detail, specials=res.specials, energy=res.energy,
+                    hourglasses=res.hourglasses, fallen=res.fallen)
 
     g = [row[:] for row in grid]
     g[r1][c1], g[r2][c2] = tb, ta
@@ -399,7 +445,8 @@ def evaluate(grid: list[list[str]], a: tuple[int, int],
     res = resolve(g, {a, b})
     return Move(a=a, b=b, score=res.score, cleared=res.cleared,
                 cascades=res.cascades, groups=res.detail,
-                specials=res.specials, energy=res.energy)
+                specials=res.specials, energy=res.energy,
+                hourglasses=res.hourglasses, fallen=res.fallen)
 
 
 def best_moves(grid: list[list[str]], top_n: int = 5) -> list[Move]:

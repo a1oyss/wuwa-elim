@@ -263,6 +263,7 @@ TILE_NAMES = {
     "L": "蓝水滴", "C": "青冰块",
     "O3": "能量瓶(3心)", "O2": "能量瓶(2心)", "O1": "能量瓶(1心)",
     "u": "终极棋子", "b": "爆炸标记", "x": "十字标记",
+    "H": "沙漏",
     "?": "未识别", ".": "空位",
 }
 
@@ -313,6 +314,9 @@ def label(feat: CellFeature) -> str:
         return f"{C.BOTTLE}{feat.hearts or 3}"
     if best == "C":
         return C.ICE
+    if best == "H":
+        # 沙漏通体金色，四角都会命中黄三角掩码，不能让它带上爆炸标记
+        return C.HOURGLASS
     return f"{best}{feat.marker}" if feat.marker else best
 
 

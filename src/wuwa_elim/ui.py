@@ -22,9 +22,10 @@ PAD = 8
 TILE_FILL = {
     "G": "#5C9770", "R": "#C0A6A6", "M": "#9D7A96", "D": "#C35A42",
     "L": "#89C3D6", "C": "#7DDDDE", "O": "#AC82B6", "u": "#D6A1C5",
+    "H": "#D9B44A",
     "b": "#2E6B3E", "x": "#2E5E6B", "?": "#3A3540", ".": "#2A2530",
 }
-TILE_TEXT = {"?": "#FFFFFF", "u": "#5A2050"}
+TILE_TEXT = {"?": "#FFFFFF", "u": "#5A2050", "H": "#4A3608"}
 
 
 def fill_of(code: str) -> str:
